@@ -1,6 +1,6 @@
 <?php
 require dirname(__FILE__) . '/lib/visma_pay_loader.php';
-print_r($payment);
+
 $vismaPay = new VismaPay\VismaPay('349428160e25b1536c3a5d91b4ef5de8049e', '7b840413f08ed44ea5a8610412d463bd');
 
 $payment_return = '';
@@ -15,11 +15,13 @@ if(isset($_GET['action']))
 
 		$method = isset($_GET['method']) ? $_GET['method'] : '';
 
-		if($result = $db->query("SELECT order_price_total, order_customer, order_products FROM tuspe_reports WHERE order_id = ". $paymentInfo["order"] ." LIMIT 1")){
+		if($result = $db->query("SELECT order_price_total, order_customer, order_products, order_shipping FROM tuspe_reports WHERE order_id = ". $paymentInfo["order"] ." LIMIT 1")){
 			while ($row = $result->fetch_assoc()) {
 
+				$orderNumber = time() ."_". $paymentInfo["order"];
+
 				$vismaPay->addCharge(array(
-					'order_number' => $paymentInfo["order"],
+					'order_number' => $orderNumber,
 					'amount' => $row["order_price_total"] * 100,
 					'currency' => 'EUR'
 				));
@@ -47,6 +49,22 @@ if(isset($_GET['action']))
 						'type' => 1
 					]);
 				}
+
+				if($row["order_shipping"]){
+
+					$p = json_decode(stripslashes($row["order_shipping"]));
+					$vismaPay->addProduct([
+						'id' => $p->id ? $p->id : "toimitus",
+						'title' => $p->title,
+						'count' => 1,
+						'pretax_price' => $p->pricePretax * 100,
+						'tax' => $p->priceVat * 100,
+						'price' => $p->price * 100,
+						'type' => 1
+					]);
+
+				}
+
 			}
 		}
 
@@ -92,7 +110,11 @@ if(isset($_GET['action']))
 				}
 				else
 				{
-					header('Location: ' . $vismaPay::API_URL . '/token/' . $result->token);
+					$data = [
+						"redirect" => $vismaPay::API_URL . '/token/' . $result->token,
+						"vismaOrder" => $orderNumber
+					];
+					head(0, $data);
 				}
 			}
 			else
@@ -119,30 +141,21 @@ if(isset($_GET['action']))
 
 	exit();
 }
-else if(isset($_GET["return-from-pay-page"]))
+else if(isset($_GET["RETURN_CODE"]))
 {
-	try
-	{
-		$result = $vismaPay->checkReturn($_GET);
-		if($result->RETURN_CODE == 0)
-		{
+	$code = (int)$_GET["RETURN_CODE"];
+	$id = (int)explode("_", strip_tags($_GET["ORDER_NUMBER"]))[1];
 
-			$id = (int)$_GET["ORDER_NUMBER"];
-			$orderId = $url[3] ? (int)$url[3] : $paymentInfo["order"];
-			$db->query("UPDATE tuspe_reports SET `status` = 1, orderTime = '". date("Y-m-d H:i:s") ."' WHERE `orderId` = ". $orderId  ." LIMIT 1");
-			header("Location: /kassa?id=". $id);
-			die();
+	if(!is_numeric($id) || $id == 0 || $code != 0) header("Location: /kassa?failed=". $id);
+	else {
 
-		}
-		else
-		{
-			$payment_return = 'Payment failed (RETURN_CODE: ' . $result->RETURN_CODE . ')';
-		}
+		$orderId = $url[3] ? (int)$url[3] : $paymentInfo["order"];
+		$db->query("UPDATE tuspe_reports SET `status` = 1, orderTime = '". date("Y-m-d H:i:s") ."' WHERE `orderId` = ". $orderId  ." LIMIT 1");
+		header("Location: /kassa?id=". $id);
+
 	}
-	catch(VismaPay\VismaPayException $e)
-	{
-		exit('Got the following exception: ' . $e->getMessage());
-	}
+
+	exit();
 }
 
 try
